@@ -14,6 +14,10 @@ Prefer, in order of usefulness for the actual decision:
 
 For an early prototype, expose the primary scenario and only the states needed to judge the agreed design question. Return for visual feedback before expanding secondary flows. During later polish or production work, cover relevant loading, empty, error, disabled, responsive, keyboard, focus, and host-specific states.
 
+## Paper
+
+Treat Paper as a UI canvas, not a presentation deck. For UI exploration, place clean product screens or flows on the canvas with only short artboard names needed to identify them. Keep rationale, recommendations, tradeoffs, evidence limits, and status in the conversation. Do not add headings, introductions, captions, callouts, or footers around the UI unless the designer explicitly asks for an annotated comparison or presentation board. Even then, use only the labels needed to compare the screens.
+
 ## Match verification to the stage
 
 - **Ready for visual feedback:** confirm the artifact renders, the interaction under review works, and the review viewport is usable. State what is simulated or incomplete. Do not call this delivery-ready.
