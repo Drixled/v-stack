@@ -1,0 +1,36 @@
+profile: kilo
+repositories:
+  kilo-cloud:
+    aliases: [cloud]
+    surfaces: [web-app]
+    artifact_preferences: [real-route, storybook, focused-prototype]
+  kilo-landing:
+    aliases: [landing]
+    surfaces: [marketing-site]
+    artifact_preferences: [real-route, storybook, focused-prototype]
+  kilo-code:
+    aliases: [core, kilocode]
+    surfaces:
+      - vscode-extension
+      - jetbrains-extension
+      - cli
+      - browser-extension
+      - console
+    artifact_preferences:
+      - extension-development-host
+      - storybook
+      - cli-session
+      - real-route
+      - focused-prototype
+  kilo-design:
+    aliases: [design]
+    surfaces: [design-authority]
+    implementation_destination: false
+design_authority:
+  canonical_tokens: tokens.json
+  generated_artifact_names:
+    - tokens.cloud.ts
+    - tokens.landing.css
+    - tokens.extension-host-map.md
+  product_skill_prefix: kilo-design-
+

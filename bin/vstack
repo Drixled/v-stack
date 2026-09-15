@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if ! command -v kilo >/dev/null 2>&1; then
+  printf '%s\n' "Kilo is not installed or is not available on PATH." >&2
+  exit 127
+fi
+
+exec kilo --agent vstack "$@"
+

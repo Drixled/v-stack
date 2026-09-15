@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/vstack-runtime.XXXXXX")
+trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+
+fixture_repo="$test_root/repo"
+mkdir -p -- "$fixture_repo"
+git -C "$fixture_repo" init -q
+
+fixture_repo_real=$(git -C "$fixture_repo" rev-parse --show-toplevel)
+state_path=$(CDPATH= cd -- "$fixture_repo" && "$repo_root/skills/vstack/scripts/init-effort")
+test "$state_path" = "$fixture_repo_real/.vstack"
+test -f "$fixture_repo/.vstack/effort.json"
+test -d "$fixture_repo/.vstack/evidence"
+git -C "$fixture_repo" check-ignore -q .vstack/effort.json
+
+fixture_video="$test_root/fixture.mp4"
+ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=320x180:d=1 -pix_fmt yuv420p "$fixture_video"
+
+evidence_dir="$test_root/evidence"
+result_path=$("$repo_root/skills/vstack/scripts/media-evidence" "$fixture_video" "$evidence_dir")
+test "$result_path" = "$evidence_dir"
+test -f "$evidence_dir/metadata.json"
+test -f "$evidence_dir/frame-001.png"
+test -f "$evidence_dir/transcript-status.txt"
+
+printf '%s\n' "vstack runtime helpers are valid."

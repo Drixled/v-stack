@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "phase": "intake",
+  "sourceReferences": [],
+  "interpretedProblem": null,
+  "repository": null,
+  "surface": null,
+  "scope": {
+    "core": null,
+    "requiredSupport": [],
+    "adjacentDrift": []
+  },
+  "direction": null,
+  "artifact": null,
+  "validation": [],
+  "publication": {
+    "status": "not-ready",
+    "pullRequest": null
+  }
+}
+

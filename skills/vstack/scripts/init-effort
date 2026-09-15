@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf '%s\n' "vstack requires a git worktree." >&2
+  exit 1
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+state_path="$repo_root/.vstack"
+
+if [ -n "$(git ls-files '.vstack' '.vstack/**')" ]; then
+  printf '%s\n' ".vstack is tracked by Git; refusing to store private effort context there." >&2
+  exit 1
+fi
+
+exclude_file=$(git rev-parse --git-path info/exclude)
+mkdir -p -- "$(dirname -- "$exclude_file")"
+if [ ! -f "$exclude_file" ] || ! grep -Fqx '.vstack/' "$exclude_file"; then
+  printf '%s\n' '.vstack/' >> "$exclude_file"
+fi
+
+mkdir -p -- "$state_path/evidence" "$state_path/explorations"
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+template="$script_dir/../templates/effort-state.json"
+if [ ! -f "$state_path/effort.json" ]; then
+  cp -- "$template" "$state_path/effort.json"
+fi
+
+if ! git check-ignore -q "$state_path"; then
+  printf '%s\n' "Could not verify that .vstack is ignored." >&2
+  exit 1
+fi
+
+printf '%s\n' "$state_path"

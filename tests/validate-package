@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+required_files="
+README.md
+setup
+bin/vstack
+agents/vstack.md
+agents/vstack-scout.md
+agents/vstack-direction.md
+agents/vstack-native-fit.md
+commands/vstack-publish.md
+skills/vstack/SKILL.md
+skills/vstack/references/problem-framing.md
+skills/vstack/profiles/kilo/PROFILE.md
+skills/vstack/templates/direction-checkpoint.md
+skills/vstack/scripts/init-effort
+skills/vstack/scripts/media-evidence
+tests/runtime-smoke-test
+"
+
+printf '%s\n' "$required_files" | while IFS= read -r relative_path; do
+  [ -z "$relative_path" ] && continue
+  if [ ! -f "$repo_root/$relative_path" ]; then
+    printf 'Missing required file: %s\n' "$relative_path" >&2
+    exit 1
+  fi
+done
+
+sh -n "$repo_root/setup"
+sh -n "$repo_root/bin/vstack"
+sh -n "$repo_root/skills/vstack/scripts/init-effort"
+sh -n "$repo_root/skills/vstack/scripts/media-evidence"
+sh -n "$repo_root/tests/setup-smoke-test"
+sh -n "$repo_root/tests/runtime-smoke-test"
+
+grep -Fq 'name: vstack' "$repo_root/skills/vstack/SKILL.md"
+grep -Fq 'mode: primary' "$repo_root/agents/vstack.md"
+grep -Fq 'mode: subagent' "$repo_root/agents/vstack-scout.md"
+grep -Fq 'agent: vstack' "$repo_root/commands/vstack-publish.md"
+
+if grep -R -n -E 'TODO|TBD|PLACEHOLDER' "$repo_root/agents" "$repo_root/skills" "$repo_root/commands" >/dev/null; then
+  printf '%s\n' "Unfinished placeholder found in runtime package." >&2
+  exit 1
+fi
+
+printf '%s\n' "vstack package structure is valid."

@@ -1,0 +1,264 @@
+#!/bin/sh
+set -eu
+
+operation="install"
+dry_run="false"
+
+for argument in "$@"; do
+  case "$argument" in
+    --check) operation="check" ;;
+    --update) operation="update" ;;
+    --uninstall) operation="uninstall" ;;
+    --dry-run) dry_run="true" ;;
+    -h|--help)
+      printf '%s\n' "Usage: ./setup [--check|--update|--uninstall] [--dry-run]"
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$argument" >&2
+      exit 2
+      ;;
+  esac
+done
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+user_home=${HOME:?HOME must be set}
+
+resolve_kilo_config_dir() {
+  if [ -n "${VSTACK_KILO_CONFIG_DIR:-}" ]; then
+    printf '%s\n' "$VSTACK_KILO_CONFIG_DIR"
+    return
+  fi
+
+  if command -v kilo >/dev/null 2>&1; then
+    resolved=$(kilo debug paths 2>/dev/null | awk '$1 == "config" { print $2; exit }')
+    if [ -n "$resolved" ]; then
+      printf '%s\n' "$resolved"
+      return
+    fi
+  fi
+
+  printf '%s/.config/kilo\n' "$user_home"
+}
+
+config_dir=$(resolve_kilo_config_dir)
+agent_dir="$config_dir/agent"
+command_dir="$config_dir/commands"
+skill_dir=${VSTACK_KILO_SKILLS_DIR:-"$user_home/.kilo/skills"}
+bin_dir=${VSTACK_BIN_DIR:-"$user_home/.local/bin"}
+state_dir=${VSTACK_STATE_DIR:-"$config_dir/vstack"}
+manifest="$state_dir/manifest.tsv"
+
+temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/vstack-setup.XXXXXX")
+trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+entries="$temp_dir/entries.tsv"
+next_manifest="$temp_dir/manifest.tsv"
+remaining_manifest="$temp_dir/remaining.tsv"
+: > "$entries"
+: > "$next_manifest"
+: > "$remaining_manifest"
+
+hash_file() {
+  shasum -a 256 "$1" | awk '{ print $1 }'
+}
+
+manifest_hash_for() {
+  target_path=$1
+  if [ ! -f "$manifest" ]; then
+    return
+  fi
+  awk -F '\t' -v target="$target_path" '$1 == target { print $2; exit }' "$manifest"
+}
+
+entry_contains_target() {
+  target_path=$1
+  awk -F '\t' -v target="$target_path" '$2 == target { found = 1 } END { exit(found ? 0 : 1) }' "$entries"
+}
+
+add_entry() {
+  source_path=$1
+  destination_path=$2
+  printf '%s\t%s\n' "$source_path" "$destination_path" >> "$entries"
+}
+
+add_entry "$script_dir/agents/vstack.md" "$agent_dir/vstack.md"
+add_entry "$script_dir/agents/vstack-scout.md" "$agent_dir/vstack-scout.md"
+add_entry "$script_dir/agents/vstack-direction.md" "$agent_dir/vstack-direction.md"
+add_entry "$script_dir/agents/vstack-native-fit.md" "$agent_dir/vstack-native-fit.md"
+add_entry "$script_dir/commands/vstack-publish.md" "$command_dir/vstack-publish.md"
+add_entry "$script_dir/bin/vstack" "$bin_dir/vstack"
+
+find "$script_dir/skills/vstack" -type f -print | sort | while IFS= read -r source_path; do
+  relative_path=${source_path#"$script_dir/skills/"}
+  add_entry "$source_path" "$skill_dir/$relative_path"
+done
+
+if [ "$operation" = "check" ]; then
+  status=0
+  if [ ! -f "$manifest" ]; then
+    printf 'vstack is not installed: no manifest at %s\n' "$manifest" >&2
+    exit 1
+  fi
+
+  while IFS="$(printf '\t')" read -r destination expected_hash; do
+    if [ ! -f "$destination" ]; then
+      printf 'Missing: %s\n' "$destination" >&2
+      status=1
+      continue
+    fi
+    current_hash=$(hash_file "$destination")
+    if [ "$current_hash" != "$expected_hash" ]; then
+      printf 'Modified: %s\n' "$destination" >&2
+      status=1
+    fi
+  done < "$manifest"
+
+  if [ "$status" -ne 0 ]; then
+    exit "$status"
+  fi
+
+  if [ "${VSTACK_SKIP_KILO_VERIFY:-0}" != "1" ] && command -v kilo >/dev/null 2>&1; then
+    kilo debug agent vstack >/dev/null
+  fi
+
+  printf 'vstack installation is healthy.\n'
+  exit 0
+fi
+
+if [ "$operation" = "uninstall" ]; then
+  if [ ! -f "$manifest" ]; then
+    printf 'vstack is not installed.\n'
+    exit 0
+  fi
+
+  while IFS="$(printf '\t')" read -r destination expected_hash; do
+    if [ ! -e "$destination" ]; then
+      continue
+    fi
+    current_hash=$(hash_file "$destination")
+    if [ "$current_hash" != "$expected_hash" ]; then
+      printf 'Preserving modified file: %s\n' "$destination" >&2
+      printf '%s\t%s\n' "$destination" "$expected_hash" >> "$remaining_manifest"
+      continue
+    fi
+    if [ "$dry_run" = "true" ]; then
+      printf 'Would remove %s\n' "$destination"
+    else
+      rm -f -- "$destination"
+      printf 'Removed %s\n' "$destination"
+    fi
+  done < "$manifest"
+
+  if [ "$dry_run" = "false" ]; then
+    if [ -s "$remaining_manifest" ]; then
+      mkdir -p -- "$state_dir"
+      mv -- "$remaining_manifest" "$manifest"
+      printf 'Some locally modified files remain installed.\n' >&2
+      exit 1
+    fi
+    rm -f -- "$manifest"
+    rmdir "$state_dir" 2>/dev/null || true
+  fi
+
+  printf 'vstack uninstall complete.\n'
+  exit 0
+fi
+
+conflict=0
+
+while IFS="$(printf '\t')" read -r source_path destination; do
+  if [ ! -f "$source_path" ]; then
+    printf 'Package file is missing: %s\n' "$source_path" >&2
+    conflict=1
+    continue
+  fi
+  if [ ! -e "$destination" ]; then
+    continue
+  fi
+
+  source_hash=$(hash_file "$source_path")
+  current_hash=$(hash_file "$destination")
+  if [ "$source_hash" = "$current_hash" ]; then
+    continue
+  fi
+
+  installed_hash=$(manifest_hash_for "$destination")
+  if [ -z "$installed_hash" ] || [ "$current_hash" != "$installed_hash" ]; then
+    printf 'Refusing to overwrite locally modified or unmanaged file: %s\n' "$destination" >&2
+    conflict=1
+  fi
+done < "$entries"
+
+if [ -f "$manifest" ]; then
+  while IFS="$(printf '\t')" read -r destination installed_hash; do
+    if entry_contains_target "$destination"; then
+      continue
+    fi
+    if [ ! -e "$destination" ]; then
+      continue
+    fi
+    current_hash=$(hash_file "$destination")
+    if [ "$current_hash" != "$installed_hash" ]; then
+      printf 'Refusing to remove obsolete locally modified file: %s\n' "$destination" >&2
+      conflict=1
+    fi
+  done < "$manifest"
+fi
+
+if [ "$conflict" -ne 0 ]; then
+  printf 'No files were changed. Resolve the conflicts and retry.\n' >&2
+  exit 1
+fi
+
+if [ -f "$manifest" ]; then
+  while IFS="$(printf '\t')" read -r destination installed_hash; do
+    if entry_contains_target "$destination" || [ ! -e "$destination" ]; then
+      continue
+    fi
+    if [ "$dry_run" = "true" ]; then
+      printf 'Would remove obsolete file %s\n' "$destination"
+    else
+      rm -f -- "$destination"
+      printf 'Removed obsolete file %s\n' "$destination"
+    fi
+  done < "$manifest"
+fi
+
+while IFS="$(printf '\t')" read -r source_path destination; do
+  source_hash=$(hash_file "$source_path")
+  printf '%s\t%s\n' "$destination" "$source_hash" >> "$next_manifest"
+
+  if [ -e "$destination" ] && [ "$(hash_file "$destination")" = "$source_hash" ]; then
+    printf 'Unchanged %s\n' "$destination"
+    continue
+  fi
+
+  if [ "$dry_run" = "true" ]; then
+    printf 'Would install %s\n' "$destination"
+    continue
+  fi
+
+  mkdir -p -- "$(dirname -- "$destination")"
+  temporary_destination="$destination.vstack-tmp.$$"
+  cp -- "$source_path" "$temporary_destination"
+  if [ -x "$source_path" ]; then
+    chmod +x "$temporary_destination"
+  fi
+  mv -- "$temporary_destination" "$destination"
+  printf 'Installed %s\n' "$destination"
+done < "$entries"
+
+if [ "$dry_run" = "true" ]; then
+  printf 'Dry run complete.\n'
+  exit 0
+fi
+
+mkdir -p -- "$state_dir"
+mv -- "$next_manifest" "$manifest"
+
+if [ "${VSTACK_SKIP_KILO_VERIFY:-0}" != "1" ] && command -v kilo >/dev/null 2>&1; then
+  kilo debug agent vstack >/dev/null
+fi
+
+printf '%s\n' "vstack is installed. Start a new Kilo session with: vstack"
+

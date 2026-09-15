@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/vstack-test.XXXXXX")
+trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+
+run_setup() {
+  VSTACK_KILO_CONFIG_DIR="$test_root/config" \
+  VSTACK_KILO_SKILLS_DIR="$test_root/skills" \
+  VSTACK_BIN_DIR="$test_root/bin" \
+  VSTACK_STATE_DIR="$test_root/state" \
+  VSTACK_SKIP_KILO_VERIFY=1 \
+  "$repo_root/setup" "$@"
+}
+
+run_setup
+
+test -f "$test_root/config/agent/vstack.md"
+test -f "$test_root/config/agent/vstack-scout.md"
+test -f "$test_root/config/commands/vstack-publish.md"
+test -f "$test_root/skills/vstack/SKILL.md"
+test -x "$test_root/bin/vstack"
+test -f "$test_root/state/manifest.tsv"
+
+run_setup --check
+run_setup --update
+
+printf '%s\n' "local modification" >> "$test_root/config/agent/vstack.md"
+if run_setup --update >/dev/null 2>&1; then
+  printf '%s\n' "Setup overwrote a local modification." >&2
+  exit 1
+fi
+
+cp -- "$repo_root/agents/vstack.md" "$test_root/config/agent/vstack.md"
+run_setup --update
+run_setup --uninstall
+
+if [ -e "$test_root/config/agent/vstack.md" ] || [ -e "$test_root/skills/vstack/SKILL.md" ] || [ -e "$test_root/bin/vstack" ]; then
+  printf '%s\n' "Uninstall left unchanged managed files behind." >&2
+  exit 1
+fi
+
+printf '%s\n' "vstack setup lifecycle is valid."
+

@@ -1,0 +1,56 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  printf '%s\n' "Usage: media-evidence <media-file> [output-directory]" >&2
+  exit 2
+fi
+
+input_file=$1
+if [ ! -f "$input_file" ]; then
+  printf 'Media file not found: %s\n' "$input_file" >&2
+  exit 1
+fi
+
+if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+  printf '%s\n' "FFmpeg and ffprobe are required for fallback media inspection." >&2
+  exit 1
+fi
+
+if [ "$#" -eq 2 ]; then
+  output_dir=$2
+else
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    repo_root=$(git rev-parse --show-toplevel)
+    output_dir="$repo_root/.vstack/evidence"
+  else
+    output_dir="$(pwd)/vstack-evidence"
+  fi
+fi
+
+mkdir -p -- "$output_dir"
+
+ffprobe -v error -show_format -show_streams -of json "$input_file" > "$output_dir/metadata.json"
+
+if ffprobe -v error -select_streams v:0 -show_entries stream=index -of csv=p=0 "$input_file" | grep -q .; then
+  ffmpeg -hide_banner -loglevel error -i "$input_file" \
+    -vf "scale='min(1280,iw)':-2" \
+    -frames:v 1 "$output_dir/frame-001.png"
+
+  ffmpeg -hide_banner -loglevel error -i "$input_file" \
+    -vf "fps=1/10:start_time=0,scale='min(1280,iw)':-2" \
+    -frames:v 11 "$output_dir/sample-%03d.png" || true
+
+  ffmpeg -hide_banner -loglevel error -i "$input_file" \
+    -vf "fps=1/10:start_time=0,scale='min(640,iw)':-2,tile=4x3:padding=8:margin=8" \
+    -frames:v 1 "$output_dir/contact-sheet.png" || true
+fi
+
+if command -v whisper >/dev/null 2>&1; then
+  whisper "$input_file" --output_dir "$output_dir" --output_format txt --fp16 False --verbose False
+  printf '%s\n' "Transcript generated with local Whisper." > "$output_dir/transcript-status.txt"
+else
+  printf '%s\n' "No local Whisper command was available. Use native model audio support or ask for the relevant spoken context." > "$output_dir/transcript-status.txt"
+fi
+
+printf '%s\n' "$output_dir"
